@@ -10,12 +10,12 @@ export default async function handler(req, res) {
     }
 
     try {
-        const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
+        const supabaseUrl = 'https://uwhwwjdoiaqtohxmpecy.supabase.co';
         const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-        if (!supabaseUrl || !supabaseServiceRoleKey) {
-            console.error("Critical: Supabase Environment variables are missing.");
-            return res.status(500).json({ error: "Configuration Error: SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY not set on Vercel." });
+        if (!supabaseServiceRoleKey) {
+            console.error("Critical: SUPABASE_SERVICE_ROLE_KEY is missing on Vercel.");
+            return res.status(500).json({ error: "Configuration Error: SUPABASE_SERVICE_ROLE_KEY not set on Vercel Dashboard." });
         }
 
         const supabase = createClient(supabaseUrl, supabaseServiceRoleKey);
