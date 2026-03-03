@@ -131,6 +131,20 @@ export default async function handler(req, res) {
                 url = `${SANKALPPE_BASE}/BillPay?at=${SANKALPPE_TOKEN}&op=${pay_operator}&num=${pay_num}&amt=${pay_amount}&rq=${pay_request_id}&acno=${pay_acno || ''}&acoth=${pay_acoth || ''}`;
                 break;
             }
+
+            // --- Payment Gateway Proxy (Original Paybil UPI) ---
+            case 'create-order':
+            case 'check-order-status': {
+                const apiBase = 'https://paybilupi.ct.ws/api/';
+                const targetUrl = `${apiBase}${action}`;
+                const response = await fetch(targetUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(req.body) // Vercel automatically parses body
+                });
+                const data = await response.json();
+                return res.status(200).json(data);
+            }
             default:
                 return res.status(400).json({ error: `Unknown action: ${action}` });
         }
