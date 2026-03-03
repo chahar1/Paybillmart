@@ -1,69 +1,125 @@
 import { createClient } from '@supabase/supabase-js';
 
+/**
+ * SankalpPe Recharge Callback Handler
+ *
+ * SankalpPe calls this URL when a recharge status changes.
+ * Register this URL in SankalpPe dashboard as:
+ *   https://<your-vercel-domain>/api/recharge-callback
+ *
+ * SankalpPe sends a GET request with these query params:
+ *   STATUS     — 1=Success, 2=Processing, 3=Failed
+ *   OPTXNID    — Operator's transaction ID (only on success)
+ *   YOURREQID  — Your original RefTxnId (maps to recharges.api_txn_id)
+ *   TXNNO      — SankalpPe's internal order ID
+ *
+ * IMPORTANT: This endpoint MUST return HTTP 200 with plain text "OK".
+ * Any other response causes SankalpPe to retry the callback.
+ */
 export default async function handler(req, res) {
-    const { STATUS, OPTXNID, YOURREQID } = req.query;
+    // Always respond 200 to SankalpPe so it doesn't keep retrying
+    res.setHeader('Content-Type', 'text/plain');
 
-    console.log('Incoming Callback:', { STATUS, OPTXNID, YOURREQID });
+    const { STATUS, OPTXNID, YOURREQID, TXNNO } = req.query;
+
+    console.log('[Callback] Incoming SankalpPe callback:', { STATUS, OPTXNID, YOURREQID, TXNNO });
 
     if (!YOURREQID || !STATUS) {
-        return res.status(400).json({ error: "Missing required query parameters: STATUS and YOURREQID" });
+        console.warn('[Callback] Missing STATUS or YOURREQID — ignoring');
+        return res.status(200).send('OK');
     }
 
     try {
-        const supabaseUrl = 'https://uwhwwjdoiaqtohxmpecy.supabase.co';
-        const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+        const supabase = createClient(
+            'https://uwhwwjdoiaqtohxmpecy.supabase.co',
+            process.env.SUPABASE_SERVICE_ROLE_KEY
+        );
 
-        if (!supabaseServiceRoleKey) {
-            console.error("Critical: SUPABASE_SERVICE_ROLE_KEY is missing on Vercel.");
-            return res.status(500).json({ error: "Configuration Error: SUPABASE_SERVICE_ROLE_KEY not set on Vercel Dashboard." });
+        if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
+            console.error('[Callback] CRITICAL: SUPABASE_SERVICE_ROLE_KEY not set on Vercel.');
+            return res.status(200).send('OK'); // Still return 200 to stop retries
         }
 
-        const supabase = createClient(supabaseUrl, supabaseServiceRoleKey);
-
-        // Map status: 1 = SUCCESS, 2 = Processing, 3 = FAILED
+        // Map SankalpPe STATUS to our internal status
+        // 1 = Success, 2 = Processing/Pending, 3+ = Failed
+        const statusStr = STATUS.toString();
         let finalStatus = 'processing';
-        if (STATUS === '1') finalStatus = 'success';
-        else if (STATUS === '3') finalStatus = 'failed';
+        if (statusStr === '1') finalStatus = 'success';
+        else if (statusStr !== '2') finalStatus = 'failed'; // 3, 4, etc. = failed
 
-        // Update the recharge record by searching for the Ref ID
+        // Find the recharge record
         const { data: recharge, error: fetchError } = await supabase
             .from('recharges')
-            .select('*')
+            .select('id, user_id, amount, status, api_txn_id')
             .eq('api_txn_id', YOURREQID)
-            .single();
+            .maybeSingle();
 
         if (fetchError || !recharge) {
-            console.warn(`No recharge found for YOURREQID: ${YOURREQID}`);
-            return res.status(404).json({ error: "Recharge record not found for the provided YOURREQID", ref: YOURREQID });
+            console.warn(`[Callback] No recharge found for YOURREQID=${YOURREQID}`);
+            return res.status(200).send('OK');
         }
 
-        // Handle Refund for failed recharge if status changes to failed
-        if (finalStatus === 'failed' && recharge.status !== 'failed') {
-            console.log(`Refunding user ${recharge.user_id} for failed recharge ${recharge.id}`);
-            await supabase.rpc('credit_wallet', {
+        console.log(`[Callback] Found recharge ${recharge.id}, current_status=${recharge.status} → new_status=${finalStatus}`);
+
+        // ── Refund logic ────────────────────────────────────────────────────
+        // Only refund if:
+        //   • New status is "failed"
+        //   • Previous status was NOT already "failed" (avoid double-refund)
+        //   • Previous status was NOT "success" (can't refund a successful recharge)
+        const shouldRefund =
+            finalStatus === 'failed' &&
+            recharge.status !== 'failed' &&
+            recharge.status !== 'success';
+
+        if (shouldRefund) {
+            console.log(`[Callback] Refunding ₹${recharge.amount} to user ${recharge.user_id}`);
+            const { error: refundError } = await supabase.rpc('credit_wallet', {
                 p_user_id: recharge.user_id,
                 p_amount: recharge.amount,
-                p_description: `Refund for Failed Recharge (Provider Sync)`,
-                p_metadata: { recharge_id: recharge.id, provider_status: STATUS, provider_txn_id: OPTXNID }
+                p_description: 'Refund: Recharge Failed (Provider Update)',
+                p_metadata: {
+                    recharge_id: recharge.id,
+                    provider_status: STATUS,
+                    provider_txn_id: OPTXNID || null,
+                    sankalppe_order_id: TXNNO || null,
+                }
             });
+            if (refundError) {
+                console.error('[Callback] Refund failed:', refundError.message);
+            } else {
+                console.log(`[Callback] Refund successful for recharge ${recharge.id}`);
+            }
         }
 
-        // Update the record with actual status and provider TXN ID
+        // ── Update the recharge record ──────────────────────────────────────
         const { error: updateError } = await supabase
             .from('recharges')
             .update({
                 status: finalStatus,
-                api_txn_id: OPTXNID || recharge.api_txn_id,
-                updated_at: new Date().toISOString()
+                api_txn_id: OPTXNID || TXNNO || recharge.api_txn_id,
+                api_response: {
+                    callback: true,
+                    STATUS,
+                    OPTXNID: OPTXNID || null,
+                    TXNNO: TXNNO || null,
+                    YOURREQID,
+                    received_at: new Date().toISOString(),
+                },
+                updated_at: new Date().toISOString(),
             })
             .eq('id', recharge.id);
 
-        if (updateError) throw updateError;
+        if (updateError) {
+            console.error('[Callback] Failed to update recharge:', updateError.message);
+        } else {
+            console.log(`[Callback] Recharge ${recharge.id} updated to status: ${finalStatus}`);
+        }
 
-        return res.status(200).send("OK");
+        return res.status(200).send('OK');
 
     } catch (error) {
-        console.error("Recharge Callback Exception:", error);
-        return res.status(500).json({ error: "Internal processing failure", message: error.message });
+        console.error('[Callback] Exception:', error.message);
+        // Still return 200 — if we return 500, SankalpPe will retry indefinitely
+        return res.status(200).send('OK');
     }
 }
