@@ -44,8 +44,8 @@ export default async function handler(req, res) {
             switch (action) {
                 case 'recharge':
                     const { mobile, amount, operator_code, request_id } = req.query;
-                    // Updated to use short keys (at, num, amt, op, rq) as per SankalpPe documentation
-                    url = `${BASE_URL}/Recharge2?at=${API_TOKEN}&num=${mobile}&amt=${amount}&op=${operator_code}&rq=${request_id}`;
+                    // Updated to use the EXACT parameters from the official documentation
+                    url = `${BASE_URL}/Recharge2?ApiToken=${API_TOKEN}&MobileNo=${mobile}&Amount=${amount}&OpId=${operator_code}&RefTxnId=${request_id}`;
                     break;
 
                 case 'bill-fetch':
