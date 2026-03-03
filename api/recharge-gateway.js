@@ -7,10 +7,16 @@ export default async function handler(req, res) {
     if (req.method === 'OPTIONS') return res.status(200).end();
 
     const { action, provider } = req.query;
+    console.log(`Gateway Request: provider=${provider}, action=${action}`);
 
     if (provider === 'sankalppe') {
-        const API_TOKEN = process.env.SANKALPPE_API_TOKEN || 'xxxxxxxx-xxx-xxx'; // Should be moved to .env
+        const API_TOKEN = '6c6a1aed-cb15-4d29-8c85-2ce5bca3c57a';
         const BASE_URL = 'https://sankalppe.com/Api/Service';
+
+        if (!API_TOKEN) {
+            console.error("SANKALPPE_API_TOKEN is missing");
+            return res.status(500).json({ error: "Server Configuration Error", detail: "SANKALPPE_API_TOKEN is not set" });
+        }
 
         try {
             let url = '';

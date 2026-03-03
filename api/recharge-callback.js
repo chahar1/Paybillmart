@@ -1,28 +1,31 @@
-
 import { createClient } from '@supabase/supabase-js';
 
-const supabase = createClient(
-    process.env.SUPABASE_URL,
-    process.env.SUPABASE_SERVICE_ROLE_KEY
-);
-
 export default async function handler(req, res) {
-    // URL: http://yourdomainname/api/recharge-callback?STATUS=[1/2/3]&OPTXNID=OOO&YOURREQID=RRR
     const { STATUS, OPTXNID, YOURREQID } = req.query;
 
-    console.log(`Callback received: STATUS=${STATUS}, REQID=${YOURREQID}, OPTXNID=${OPTXNID}`);
+    console.log('Incoming Callback:', { STATUS, OPTXNID, YOURREQID });
 
     if (!YOURREQID || !STATUS) {
-        return res.status(400).send("Missing parameters");
+        return res.status(400).json({ error: "Missing required query parameters: STATUS and YOURREQID" });
     }
 
     try {
-        // Status: 1 = SUCCESS, 2 = Processing, 3 = FAILED
+        const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
+        const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+        if (!supabaseUrl || !supabaseServiceRoleKey) {
+            console.error("Critical: Supabase Environment variables are missing.");
+            return res.status(500).json({ error: "Configuration Error: SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY not set on Vercel." });
+        }
+
+        const supabase = createClient(supabaseUrl, supabaseServiceRoleKey);
+
+        // Map status: 1 = SUCCESS, 2 = Processing, 3 = FAILED
         let finalStatus = 'processing';
         if (STATUS === '1') finalStatus = 'success';
-        if (STATUS === '3') finalStatus = 'failed';
+        else if (STATUS === '3') finalStatus = 'failed';
 
-        // Update the recharge record
+        // Update the recharge record by searching for the Ref ID
         const { data: recharge, error: fetchError } = await supabase
             .from('recharges')
             .select('*')
@@ -30,19 +33,22 @@ export default async function handler(req, res) {
             .single();
 
         if (fetchError || !recharge) {
-            return res.status(404).send("Recharge not found");
+            console.warn(`No recharge found for YOURREQID: ${YOURREQID}`);
+            return res.status(404).json({ error: "Recharge record not found for the provided YOURREQID", ref: YOURREQID });
         }
 
-        // If it was failed, and we changed to failed, we need to refund (if not already handled)
+        // Handle Refund for failed recharge if status changes to failed
         if (finalStatus === 'failed' && recharge.status !== 'failed') {
+            console.log(`Refunding user ${recharge.user_id} for failed recharge ${recharge.id}`);
             await supabase.rpc('credit_wallet', {
                 p_user_id: recharge.user_id,
                 p_amount: recharge.amount,
-                p_description: `Refund: Recharge Failed (Callback)`,
-                p_metadata: { recharge_id: recharge.id, callback_status: STATUS }
+                p_description: `Refund for Failed Recharge (Provider Sync)`,
+                p_metadata: { recharge_id: recharge.id, provider_status: STATUS, provider_txn_id: OPTXNID }
             });
         }
 
+        // Update the record with actual status and provider TXN ID
         const { error: updateError } = await supabase
             .from('recharges')
             .update({
@@ -57,7 +63,7 @@ export default async function handler(req, res) {
         return res.status(200).send("OK");
 
     } catch (error) {
-        console.error("Callback Processing Error:", error);
-        return res.status(500).send("Internal Server Error");
+        console.error("Recharge Callback Exception:", error);
+        return res.status(500).json({ error: "Internal processing failure", message: error.message });
     }
 }
