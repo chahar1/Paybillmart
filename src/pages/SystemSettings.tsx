@@ -310,9 +310,10 @@ export default function SystemSettings() {
                                             <thead>
                                                 <tr>
                                                     <th className="enterprise-table-header">Provider Name</th>
-                                                    <th className="enterprise-table-header text-center">Priority</th>
+                                                    <th className="enterprise-table-header text-center">Protocol</th>
                                                     <th className="enterprise-table-header text-center">Usage</th>
                                                     <th className="enterprise-table-header text-center">Status</th>
+                                                    <th className="enterprise-table-header text-center">Remote Balance</th>
                                                     <th className="enterprise-table-header text-right">Action</th>
                                                 </tr>
                                             </thead>
@@ -331,7 +332,7 @@ export default function SystemSettings() {
                                                             </div>
                                                         </td>
                                                         <td className="px-6 py-6 text-center border-b border-slate-50">
-                                                            <span className="text-sm font-black text-slate-900">1:{api.priority}</span>
+                                                            <span className="text-xs font-black text-slate-400 uppercase tracking-widest">{api.name === 'SankalpPe' ? 'Sankalp-V2' : 'MPLAN-V1'}</span>
                                                         </td>
                                                         <td className="px-6 py-6 border-b border-slate-50">
                                                             <div className="flex flex-col gap-1.5 max-w-[120px] mx-auto">
@@ -354,6 +355,24 @@ export default function SystemSettings() {
                                                             >
                                                                 {api.is_active ? 'Online' : 'Revoked'}
                                                             </button>
+                                                        </td>
+                                                        <td className="px-6 py-6 text-center border-b border-slate-50">
+                                                            {api.name.toLowerCase().includes('sankalp') ? (
+                                                                <button
+                                                                    onClick={async () => {
+                                                                        try {
+                                                                            const res = await fetch(`/api/recharge-gateway?provider=sankalppe&action=balance`);
+                                                                            const data = await res.json();
+                                                                            alert(`Remote Balance: ₹${data.BALANCE || 'Error'}`);
+                                                                        } catch (e) { alert("Check failed"); }
+                                                                    }}
+                                                                    className="text-[10px] font-bold text-indigo-600 hover:text-indigo-800 underline decoration-indigo-200"
+                                                                >
+                                                                    Fetch Balance
+                                                                </button>
+                                                            ) : (
+                                                                <span className="text-[10px] text-slate-300">N/A</span>
+                                                            )}
                                                         </td>
                                                         <td className="px-6 py-6 text-right border-b border-slate-50">
                                                             <div className="flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-all translate-x-2 group-hover:translate-x-0">
