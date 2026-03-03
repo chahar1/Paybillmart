@@ -1,14 +1,6 @@
 
 /**
  * SankalpPe Recharge Gateway — Vercel Serverless Function
- *
- * All recharge API calls use GET requests.
- * SankalpPe OpId must be a NUMERIC value (source_id from operators.metadata).
- *
- * STATUS codes from SankalpPe:
- *   1 = Success
- *   2 = Processing / Pending (operator timeout)
- *   3+ = Failed
  */
 
 const SANKALPPE_TOKEN = '6c6a1aed-cb15-4d29-8c85-2ce5bca3c57a';
@@ -45,15 +37,19 @@ export default async function handler(req, res) {
     const provider = req.query.provider || 'sankalppe';
     const action = req.query.action;
 
+    // Get Caller IP to help with whitelisting
+    const forwarded = req.headers['x-forwarded-for'];
+    const callerIp = forwarded ? forwarded.split(',')[0] : req.socket.remoteAddress;
+
     if (!action) {
         return res.status(200).send(`
             <h1>Paybil Recharge Gateway</h1>
-            <p>Usage: <code>/api/recharge-gateway?action=balance&provider=sankalppe</code></p>
-            <p>Available actions: recharge, balance, status, bill-fetch, bill-pay, complaint</p>
+            <p><strong>Your Current Vercel IP:</strong> <code style="background:#eee;padding:2px 5px;">${callerIp}</code></p>
+            <p>Usage: <code>/api/recharge-gateway?action=balance</code></p>
+            <hr>
+            <p>Available actions: <code>recharge, balance, status, bill-fetch, bill-pay, complaint</code></p>
         `);
     }
-
-    console.log(`[Gateway] provider=${provider} action=${action}`);
 
     if (provider !== 'sankalppe') {
         return res.status(400).json({ error: 'Unsupported provider. Use provider=sankalppe' });
@@ -63,31 +59,44 @@ export default async function handler(req, res) {
         let url = '';
 
         switch (action) {
-
             case 'recharge': {
-                // Required params: mobile, amount, op_id (NUMERIC source_id), request_id
                 const { mobile, amount, op_id, request_id } = req.query;
-
                 if (!mobile || !amount || !op_id || !request_id) {
-                    return res.status(400).json({
-                        error: 'Missing required parameters: mobile, amount, op_id, request_id'
-                    });
+                    return res.status(400).json({ error: 'Missing parameters' });
                 }
-
                 url = `${SANKALPPE_BASE}/Recharge2?ApiToken=${SANKALPPE_TOKEN}&MobileNo=${mobile}&Amount=${amount}&OpId=${op_id}&RefTxnId=${request_id}`;
                 break;
             }
-
             case 'balance': {
                 url = `${SANKALPPE_BASE}/Balance?at=${SANKALPPE_TOKEN}`;
                 break;
             }
+            case 'complaint': {
+                const { rq, remark } = req.query;
+                if (!rq) {
+                    return res.status(400).json({ error: 'Missing required parameter: rq' });
+                }
+                url = `${SANKALPPE_BASE}/complaint?at=${SANKALPPE_TOKEN}&rq=${rq}&rm=${remark || ''}`;
+                break;
+            }
 
+            // --- MPlan Actions ---
+            case 'mplan-plans': {
+                const { operator_code, circle_code } = req.query;
+                const mapiKey = '86950d2c94bf25613b3e1b5e2a5763f5';
+                url = `https://mplan.in/apiv2/mobileplans?apikey=${mapiKey}&operator_code=${operator_code}&circle_code=${circle_code}`;
+                break;
+            }
+
+            case 'mplan-roffer': {
+                const { operator_code, mobile_number } = req.query;
+                const mapiKey = '86950d2c94bf25613b3e1b5e2a5763f5';
+                url = `https://mplan.in/apiv2/mobile_roffer?apikey=${mapiKey}&operator_code=${operator_code}&mobile_number=${mobile_number}`;
+                break;
+            }
             case 'status': {
                 const { ref_id } = req.query;
-                if (!ref_id) {
-                    return res.status(400).json({ error: 'Missing required parameter: ref_id' });
-                }
+                if (!ref_id) return res.status(400).json({ error: 'Missing ref_id' });
                 url = `${SANKALPPE_BASE}/statuscheck?ApiToken=${SANKALPPE_TOKEN}&RefTxnId=${ref_id}`;
                 break;
             }
@@ -109,40 +118,23 @@ export default async function handler(req, res) {
                 url = `${SANKALPPE_BASE}/BillPay?at=${SANKALPPE_TOKEN}&op=${pay_operator}&num=${pay_num}&amt=${pay_amount}&rq=${pay_request_id}&acno=${pay_acno || ''}&acoth=${pay_acoth || ''}`;
                 break;
             }
-
-            case 'complaint': {
-                const { rq, remark } = req.query;
-                if (!rq) {
-                    return res.status(400).json({ error: 'Missing required parameter: rq' });
-                }
-                url = `${SANKALPPE_BASE}/complaint?at=${SANKALPPE_TOKEN}&rq=${rq}&rm=${remark || ''}`;
-                break;
-            }
-
             default:
                 return res.status(400).json({ error: `Unknown action: ${action}` });
         }
 
-        console.log(`[SankalpPe] GET ${url}`);
         const response = await fetch(url);
         const data = await response.json();
 
-        // Enrich error code description
+        // Enrich error code
         const errCode = data.ERRORCODE?.toString();
         if (errCode && ERROR_CODES[errCode]) {
             data.ERROR_NAME = ERROR_CODES[errCode];
-            if (data.STATUS?.toString() !== '1') {
-                data.MESSAGE = data.MESSAGE
-                    ? `${data.MESSAGE} — ${data.ERROR_NAME}`
-                    : data.ERROR_NAME;
-            }
+            data.YOUR_IP = callerIp;
         }
 
-        console.log(`[SankalpPe] Response:`, JSON.stringify(data));
         return res.status(200).json(data);
 
     } catch (error) {
-        console.error('[Gateway Error]:', error);
-        return res.status(500).json({ error: error.message });
+        return res.status(500).json({ error: error.message, callerIp });
     }
 }
