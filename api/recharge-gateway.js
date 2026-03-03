@@ -42,7 +42,17 @@ export default async function handler(req, res) {
 
     if (req.method === 'OPTIONS') return res.status(200).end();
 
-    const { action, provider } = req.query;
+    const provider = req.query.provider || 'sankalppe';
+    const action = req.query.action;
+
+    if (!action) {
+        return res.status(200).send(`
+            <h1>Paybil Recharge Gateway</h1>
+            <p>Usage: <code>/api/recharge-gateway?action=balance&provider=sankalppe</code></p>
+            <p>Available actions: recharge, balance, status, bill-fetch, bill-pay, complaint</p>
+        `);
+    }
+
     console.log(`[Gateway] provider=${provider} action=${action}`);
 
     if (provider !== 'sankalppe') {
