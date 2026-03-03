@@ -41,13 +41,26 @@ export default async function handler(req, res) {
     const forwarded = req.headers['x-forwarded-for'];
     const callerIp = forwarded ? forwarded.split(',')[0] : req.socket.remoteAddress;
 
+    // Get Server Outbound IP (The IP SankalpPe actually sees)
+    let serverIp = 'Detecting...';
+    try {
+        const ipRes = await fetch('https://api.ipify.org?format=json');
+        const ipData = await ipRes.json();
+        serverIp = ipData.ip;
+    } catch (e) {
+        serverIp = 'Error detecting IP';
+    }
+
     if (!action) {
         return res.status(200).send(`
-            <h1>Paybil Recharge Gateway</h1>
-            <p><strong>Your Current Vercel IP:</strong> <code style="background:#eee;padding:2px 5px;">${callerIp}</code></p>
-            <p>Usage: <code>/api/recharge-gateway?action=balance</code></p>
-            <hr>
-            <p>Available actions: <code>recharge, balance, status, bill-fetch, bill-pay, complaint</code></p>
+            <div style="font-family:sans-serif;max-width:600px;margin:20px auto;border:1px solid #ddd;padding:20px;border-radius:8px;">
+                <h1 style="color:#2563eb;">Paybil Recharge Gateway</h1>
+                <p><strong>Vercel SERVER IP (Whitelist this):</strong> <code style="background:#eee;padding:4px 8px;border-radius:4px;font-size:1.2em;color:#d97706;">${serverIp}</code></p>
+                <p style="color:#666;font-size:0.9em;"><em>Note: This is the IP SankalpPe sees. Your personal IP is ${callerIp}.</em></p>
+                <hr>
+                <p><strong>Available actions:</strong> recharge, balance, status, bill-fetch, bill-pay, complaint</p>
+                <p>Usage: <code>/api/recharge-gateway?action=balance</code></p>
+            </div>
         `);
     }
 
